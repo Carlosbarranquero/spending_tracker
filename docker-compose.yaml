@@ -11,25 +11,29 @@ services:
       - N8N_PROTOCOL=https
       - WEBHOOK_URL=${WEBHOOK_URL}
       - N8N_EDITOR_BASE_URL=${N8N_EDITOR_BASE_URL}
+      - N8N_SKIP_WEBHOOK_DEREGISTRATION_ON_VARS_CHANGE=true
     volumes:
       - ./vols/n8n_data:/home/node/.n8n
-    depends_on:
-      - ollama
+    # depends_on:
+    #   - ollama
 
-  ollama:
-    image: ollama/ollama:latest
-    restart: unless-stopped
-    ports:
-      - "11434:11434"
-    volumes:
-      - ./vols/ollama:/root/.ollama
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   restart: unless-stopped
+  #   ports:
+  #     - "11434:11434"
+  #   volumes:
+  #     - ./vols/ollama:/root/.ollama
+  #   mem_limit: 8g
+  #   mem_reservation: 7g
+  #   cpus: 4.0
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
 
   ngrok:
     image: ngrok/ngrok:latest
