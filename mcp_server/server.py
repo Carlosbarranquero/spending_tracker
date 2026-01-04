@@ -33,20 +33,6 @@ def generate_receipt_id(description: str, amount: str, timestamp: str) -> str:
     combined = f"{description}{amount}{timestamp}"
     return hashlib.md5(combined.encode()).hexdigest()[:8].upper()
 
-def calculate_tax_category(amount: float, category: str) -> str:
-    """Determina si el gasto es deducible según categoría y monto"""
-    tax_deductible = {
-        "Alimentación": False,
-        "Transporte": True,
-        "Servicios": True,
-        "Salud": True,
-        "Educación": True,
-        "Oficina": True,
-        "Tecnología": True,
-        "Viaje": True,
-        "General": False,
-    }
-    return "Sí" if tax_deductible.get(category, False) else "No"
 @mcp.tool()
 async def add_expense(
     description: str,
@@ -57,16 +43,7 @@ async def add_expense(
     spreadsheet_id: str = "",
 ) -> str:
     """
-    Registra un gasto con los campos esenciales.
-    
-    Campos almacenados:
-    1. date_str: Fecha del registro (YYYY-MM-DD)
-    2. receipt_id: Identificador único
-    3. description: Detalle del gasto
-    4. category: Categoría del gasto
-    5. amount: Monto numérico
-    6. currency: Divisa (USD/EUR/etc)
-    7. time_str: Hora exacta
+    Registra un gasto con conversión automática a Euros.
     """
     
     sid = (spreadsheet_id or DEFAULT_SPREADSHEET_ID).strip()
@@ -78,27 +55,48 @@ async def add_expense(
     date_str = now.strftime("%Y-%m-%d")
     time_str = now.strftime("%H:%M:%S")
     
-    # 2. Validar y formatear monto
-    amt = (amount or "").replace(",", ".")
+    # 2. Validar y formatear monto original
+    amt_raw = (amount or "").replace(",", ".")
     try:
-        amt_float = float(amt)
+        amt_float = float(amt_raw)
         if amt_float <= 0:
             return "❌ El monto debe ser mayor a 0"
     except ValueError:
-        return f"❌ Monto inválido: {amt}"
+        return f"❌ Monto inválido: {amt_raw}"
+
+    # 3. Lógica de Conversión a EUR
+    amount_eur = amt_float # Valor por defecto si ya es EUR
     
-    # 3. Generar ID único
-    receipt_id = generate_receipt_id(description, amt, date_str + time_str)
+    if currency.upper() != "EUR":
+        try:
+            # Leer el factor de conversión de la hoja 'conversion' celda B2
+            result = sheets().spreadsheets().values().get(
+                spreadsheetId=sid,
+                range="conversion!B2"
+            ).execute()
+            
+            conv_values = result.get('values', [])
+            if not conv_values or not conv_values[0]:
+                return "❌ No se encontró el valor de conversión en 'conversion!B2'"
+            
+            conversion_rate = float(str(conv_values[0][0]).replace(",", "."))
+            amount_eur = amt_float * conversion_rate
+        except Exception as e:
+            return f"❌ Error al obtener tasa de conversión: {str(e)}"
+
+    # 4. Generar ID único
+    receipt_id = generate_receipt_id(description, amt_raw, date_str + time_str)
     
-    # 4. Estructurar fila (Únicamente los campos solicitados)
+    # 5. Estructurar fila (Añadida columna H: Amount EUR)
     values = [[
-        date_str,      # A: date_str
-        receipt_id,    # B: receipt_id
-        description,   # C: description
-        category,      # D: category
-        amt,           # E: amount
-        currency,      # F: currency
-        time_str       # G: time_str
+        date_str,       # A: date_str
+        receipt_id,     # B: receipt_id
+        description,    # C: description
+        category,       # D: category
+        amt_raw,        # E: amount
+        currency,       # F: currency
+        time_str,       # G: time_str
+        round(amount_eur, 2) # H: Amount (Euros)
     ]]
     
     try:
@@ -110,12 +108,11 @@ async def add_expense(
         ).execute()
         
         return (
-            f"✅ GASTO SIMPLIFICADO REGISTRADO\n"
+            f"✅ GASTO REGISTRADO CON ÉXITO\n"
             f"🆔 ID: {receipt_id}\n"
-            f"📅 Fecha: {date_str} {time_str}\n"
-            f"💰 Monto: {amt} {currency}\n"
-            f"📝 Concepto: {description}\n"
-            f"🏷️ Categoría: {category}"
+            f"💰 Original: {amt_raw} {currency}\n"
+            f"💶 Total EUR: {round(amount_eur, 2)}€\n"
+            f"📝 Concepto: {description}"
         )
     
     except Exception as e:
