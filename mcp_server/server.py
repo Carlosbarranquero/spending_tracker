@@ -16,21 +16,6 @@ SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 SA_JSON = os.environ.get("GSHEETS_SA_JSON", "service-account.json")
 DEFAULT_SPREADSHEET_ID = os.environ.get("GSHEETS_DEFAULT_SPREADSHEET_ID","")
 
-class PaymentMethod(str, Enum):
-    """Métodos de pago para auditoría financiera"""
-    EFECTIVO = "Efectivo"
-    TARJETA_CREDITO = "Tarjeta Crédito"
-    TARJETA_DEBITO = "Tarjeta Débito"
-    TRANSFERENCIA = "Transferencia"
-    BILLETERA_DIGITAL = "Billetera Digital"
-    OTRO = "Otro"
-
-class ExpenseStatus(str, Enum):
-    """Estado del gasto para seguimiento"""
-    PENDIENTE = "Pendiente"
-    CONFIRMADO = "Confirmado"
-    REEMBOLSABLE = "Reembolsable"
-    IMPUTABLE = "Imputable"
 
 def sheets():
     creds = service_account.Credentials.from_service_account_file(SA_JSON, scopes=SCOPES)
@@ -62,49 +47,39 @@ def calculate_tax_category(amount: float, category: str) -> str:
         "General": False,
     }
     return "Sí" if tax_deductible.get(category, False) else "No"
-
 @mcp.tool()
 async def add_expense(
     description: str,
     amount: str,
     category: str = "General",
-    currency: str = "USD",
-    payment_method: str = "Tarjeta Crédito",
-    status: str = "Confirmado",
-    notes: str = "",
+    currency: str = "EUR",
     sheet_name: str = "",
     spreadsheet_id: str = "",
 ) -> str:
     """
-    Registra un gasto con análisis avanzado.
+    Registra un gasto con los campos esenciales.
     
-    Columnas inteligentes:
-    1. Fecha - Cuando ocurrió
-    2. ID Recibo - Hash único para auditoría
-    3. Descripción - Qué se compró
-    4. Categoría - Tipo de gasto
-    5. Monto - Cantidad
-    6. Moneda - USD/EUR/etc
-    7. Método Pago - Trazabilidad financiera
-    8. Deducible - Importancia fiscal
-    9. Estado - Seguimiento del gasto
-    10. Hora Exacta - Timestamp para duplicados
-    11. Notas - Contexto adicional
-    12. Mes/Año - Para reportes automáticos
+    Campos almacenados:
+    1. date_str: Fecha del registro (YYYY-MM-DD)
+    2. receipt_id: Identificador único
+    3. description: Detalle del gasto
+    4. category: Categoría del gasto
+    5. amount: Monto numérico
+    6. currency: Divisa (USD/EUR/etc)
+    7. time_str: Hora exacta
     """
     
     sid = (spreadsheet_id or DEFAULT_SPREADSHEET_ID).strip()
     title = sheet_name or first_sheet_title(sid)
     
-    # Normalizar datos con zona horaria Indochina (ICT)
-    ict = pytz.timezone('Asia/Bangkok')  # Zona horaria Indochina
+    # 1. Normalizar fecha y hora (ICT - Indochina)
+    ict = pytz.timezone('Asia/Bangkok')
     now = datetime.now(ict)
     date_str = now.strftime("%Y-%m-%d")
     time_str = now.strftime("%H:%M:%S")
-    month_year = now.strftime("%B %Y")  # Ej: "January 2025"
-    amt = (amount or "").replace(",", ".")
     
-    # Validar monto
+    # 2. Validar y formatear monto
+    amt = (amount or "").replace(",", ".")
     try:
         amt_float = float(amt)
         if amt_float <= 0:
@@ -112,38 +87,18 @@ async def add_expense(
     except ValueError:
         return f"❌ Monto inválido: {amt}"
     
-    # Generar ID único del recibo
+    # 3. Generar ID único
     receipt_id = generate_receipt_id(description, amt, date_str + time_str)
     
-    # Determinar si es deducible
-    is_deductible = calculate_tax_category(amt_float, category)
-    
-    # Validar status
-    try:
-        status_val = ExpenseStatus[status.upper().replace(" ", "_")]
-    except KeyError:
-        status_val = ExpenseStatus.CONFIRMADO
-    
-    # Validar método de pago
-    try:
-        payment_val = PaymentMethod[payment_method.upper().replace(" ", "_")]
-    except KeyError:
-        payment_val = PaymentMethod.OTRO
-    
-    # Crear fila con todas las columnas inteligentes
+    # 4. Estructurar fila (Únicamente los campos solicitados)
     values = [[
-        date_str,                          # A: Fecha
-        receipt_id,                        # B: ID Recibo (auditoría)
-        description,                       # C: Descripción
-        category,                          # D: Categoría
-        amt,                               # E: Monto
-        currency,                          # F: Moneda
-        payment_val.value,                 # G: Método Pago (trazabilidad)
-        is_deductible,                     # H: Deducible? (fiscal)
-        status_val.value,                  # I: Estado (seguimiento)
-        time_str,                          # J: Hora Exacta (anti-duplicados)
-        notes,                             # K: Notas adicionales
-        month_year,                        # L: Mes/Año (reportes)
+        date_str,      # A: date_str
+        receipt_id,    # B: receipt_id
+        description,   # C: description
+        category,      # D: category
+        amt,           # E: amount
+        currency,      # F: currency
+        time_str       # G: time_str
     ]]
     
     try:
@@ -155,20 +110,16 @@ async def add_expense(
         ).execute()
         
         return (
-            f"✅ GASTO REGISTRADO\n"
-            f"📋 Recibo: {receipt_id}\n"
-            f"📅 {date_str} {time_str}\n"
-            f"💰 {amt} {currency}\n"
-            f"📝 {description}\n"
-            f"🏷️  {category}\n"
-            f"💳 {payment_val.value}\n"
-            f"📊 Deducible: {is_deductible}\n"
-            f"📍 Estado: {status_val.value}"
+            f"✅ GASTO SIMPLIFICADO REGISTRADO\n"
+            f"🆔 ID: {receipt_id}\n"
+            f"📅 Fecha: {date_str} {time_str}\n"
+            f"💰 Monto: {amt} {currency}\n"
+            f"📝 Concepto: {description}\n"
+            f"🏷️ Categoría: {category}"
         )
     
     except Exception as e:
-        return f"❌ Error al registrar: {str(e)}"
-
+        return f"❌ Error al registrar en Google Sheets: {str(e)}"
 
 if __name__ == "__main__":
     mcp.run(transport="streamable-http")
